@@ -1,0 +1,73 @@
+{
+  "name": "typescript-nest-project-template",
+  "version": "0.0.0",
+  "description": "Some project boilerplate to get off to the races",
+  "author": "Unibuddy",
+  "private": true,
+  "scripts": {
+    "clean": "rimraf node_modules",
+    "build": "rimraf dist && nest build",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:debug": "nest start --debug --watch",
+    "start:prod": "node dist/main",
+    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --max-warnings=0",
+    "lint:fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --silent --forceExit --runInBand --detectOpenHandles",
+    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
+    "test:e2e": "jest --config ./test/jest.e2e.config.js --coverage --silent --forceExit",
+    "test:e2e:watch": "jest --config ./test/jest.e2e.config.js --watch",
+    "build-schema": "export DD_TRACE_ENABLED=false && ts-node ./scripts/generate-federated-schema.ts && git add ./src/schema.gql && git add ./src/federated-schema.gql"
+  },
+  "pre-commit": {
+    "run": [
+      "build-schema"
+    ]
+  },
+  "dependencies": {
+    "@apollo/federation": "^0.36.1",
+    "@apollo/subgraph": "^2.0.5",
+    "@nestjs/apollo": "^10.0.17",
+    "@nestjs/common": "^9.0.0",
+    "@nestjs/config": "^1.1.6",
+    "@nestjs/core": "^9.0.0",
+    "@nestjs/graphql": "^10.0.18",
+    "@nestjs/platform-express": "^9.0.0",
+    "apollo-server-express": "^3.10.0",
+    "graphql": "^16.5.0",
+    "lodash.get": "^4.4.2",
+    "reflect-metadata": "^0.1.13",
+    "rimraf": "^3.0.2",
+    "rxjs": "^7.5.2",
+    "unibuddy-apm": "^1.2.1027",
+    "unibuddy-logger": "^3.0.1040"
+  },
+  "devDependencies": {
+    "@graphql-tools/utils": "^8.8.0",
+    "@nestjs/cli": "^9.0.0",
+    "@nestjs/schematics": "^9.0.0",
+    "@nestjs/testing": "^9.0.0",
+    "@types/express": "^4.17.13",
+    "@types/jest": "28.1.4",
+    "@types/lodash.get": "^4.4.7",
+    "@types/node": "^16.0.0",
+    "@types/supertest": "^2.0.12",
+    "@typescript-eslint/eslint-plugin": "^5.20.0",
+    "@typescript-eslint/parser": "^5.20.0",
+    "eslint": "^8.13.0",
+    "eslint-config-prettier": "^8.3.0",
+    "eslint-plugin-prettier": "^4.0.0",
+    "graphql-request": "^4.3.0",
+    "jest": "^28.1.2",
+    "pre-commit": "^1.2.2",
+    "prettier": "^2.5.1",
+    "supertest": "^6.2.4",
+    "ts-jest": "^28.0.5",
+    "ts-node": "^10.8.2",
+    "tsconfig-paths": "4.0.0",
+    "typescript": "^4.7.4"
+  }
+}

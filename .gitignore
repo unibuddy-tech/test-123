@@ -1,0 +1,48 @@
+# IDE'S / TEXT EDITORS
+.vscode
+.vscode/*
+.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+.settings/
+.idea
+*.swp
+.project
+.classpath
+.c9/
+*.launch
+*.sublime-workspace
+
+### OS ###
+.DS_STORE
+
+### CDK ###
+cdk.context.json
+.cdk.staging/
+cdk.out/
+*.tabl.json
+
+### LOGS ###
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+### OUTPUTS ###
+/dist
+/build
+/node_modules
+
+### TESTS ###
+/coverage
+/.nyc_output
+/test/coverage
+
+### GRAPH QL ###
+schema-test.gql
+
+### Package LOCK ###
+package-lock.json

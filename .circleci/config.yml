@@ -1,0 +1,288 @@
+version: 2.1
+
+parameters:
+  build:
+    type: boolean
+    default: true
+  deploy:
+    type: boolean
+    default: false
+  deployment_target:
+    type: string
+    default: qa
+  deployment_version:
+    type: string
+    default: ''
+  ub_region:
+    type: string
+    default: 'eu-west-1'
+
+orbs:
+  version-creation: unibuddy/version-creation@2.0.1
+  change-detection: unibuddy/change-detection@1.0
+
+golden_image: &golden_image
+  docker:
+    - image: $AWS_ECR_URL/ub-core-build-base:v1.3.1202
+      aws_auth:
+        aws_access_key_id: $AWS_ACCESS_KEY_ID
+        aws_secret_access_key: $AWS_SECRET_ACCESS_KEY
+
+aws_ca_npm_login: &aws_ca_npm_login
+  run:
+    name: Login to npm CodeArtifact
+    command: code_artifact_login npm
+
+aws_ca_pip_login: &aws_ca_pip_login
+  run:
+    name: Login to pip CodeArtifact
+    command: code_artifact_login pip
+
+# Deployment dependency caching
+deployment_dependency_key: &deployment_dependency_key deployment-dependencies-{{ checksum ".circleci/deploy/requirements.txt"}}
+ecr_deployment_dependency_key: &ecr_deployment_dependency_key deployment-dependencies-{{ checksum ".circleci/deploy_ecr/requirements.txt"}}
+
+restore_deployment_dependencies: &restore_deployment_dependencies
+  restore_cache:
+    key: *deployment_dependency_key
+
+save_deployment_dependencies: &save_deployment_dependencies
+  save_cache:
+    key: *deployment_dependency_key
+    paths:
+      - /home/circleci/.local/lib/python3.8/site-packages
+
+restore_ecr_deployment_dependencies: &restore_ecr_deployment_dependencies
+  restore_cache:
+    key: *ecr_deployment_dependency_key
+
+save_ecr_deployment_dependencies: &save_ecr_deployment_dependencies
+  save_cache:
+    key: *ecr_deployment_dependency_key
+    paths:
+      - /home/circleci/.local/lib/python3.8/site-packages
+
+# Application dependency caching
+application_dependency_key: &application_dependency_key application-dependencies-{{ .Branch }}-{{ checksum "yarn.lock" }}
+
+restore_application_dependencies: &restore_application_dependencies
+  restore_cache:
+    key: *application_dependency_key
+
+save_application_dependencies: &save_application_dependencies
+  save_cache:
+    key: *application_dependency_key
+    paths:
+      - ~/repo/node_modules
+
+# CI Jobs
+jobs:
+  test-service:
+    working_directory: ~/repo
+    <<: *golden_image
+    steps:
+      - checkout
+      - <<: *restore_application_dependencies
+      - <<: *aws_ca_npm_login
+      - run:
+          name: Installation of Application Dependencies
+          command: yarn install --frozen-lockfile --non-interactive
+      - <<: *save_application_dependencies
+      - run:
+          name: Linting of code
+          command: yarn lint
+      - run:
+          name: Run tests
+          command: yarn test:coverage
+
+  deploy_ecr_repository:
+    parameters:
+      target:
+        default: qa
+        type: enum
+        description: Where to deploy the ECR repository to
+        enum: ['qa', 'sandbox']
+    working_directory: ~/repo
+    <<: *golden_image
+    steps:
+      - checkout
+      - <<: *restore_ecr_deployment_dependencies
+      - <<: *aws_ca_pip_login
+      - run:
+          name: Installation of ECR Repository deployment dependencies
+          command: pip install -r ./.circleci/deploy_ecr/requirements.txt
+      - <<: *save_ecr_deployment_dependencies
+      - run:
+          name: ECR CDK diff
+          command: |
+            source /app/build-base/assume_role.sh << parameters.target >>
+            cd ./.circleci/deploy_ecr
+            cdk diff
+      - run:
+          name: Deployment of ECR repository
+          command: |
+            source /app/build-base/assume_role.sh << parameters.target >>
+            cd ./.circleci/deploy_ecr
+            cdk deploy --all --require-approval never --progress events
+
+  deploy-service:
+    parameters:
+      version:
+        type: string
+      target:
+        type: string
+    working_directory: ~/repo
+    <<: *golden_image
+    steps:
+      - checkout
+      - <<: *restore_deployment_dependencies
+      - <<: *aws_ca_pip_login
+      - run:
+          name: Installation of Deployment Dependencies
+          command: pip install -r ./.circleci/deploy/requirements.txt
+      - <<: *save_deployment_dependencies
+      - run:
+          name: CDK diff
+          command: |
+            source /app/build-base/assume_role.sh << pipeline.parameters.deployment_target >>
+            cd ./.circleci/deploy
+            export UB_ENVIRONMENT=<< parameters.target >>
+            export VERSION=<< parameters.version >>
+
+            cdk diff
+      - store_artifacts:
+          path: ./.circleci/deploy/cdk.out
+      - run:
+          name: Deployment of Service
+          command: |
+            source /app/build-base/assume_role.sh << pipeline.parameters.deployment_target >>
+            cd ./.circleci/deploy
+            export UB_ENVIRONMENT=<< parameters.target >>
+            export VERSION=<< parameters.version >>
+
+            cdk deploy --all --require-approval never --progress events
+
+  publish-docker-image:
+    working_directory: ~/repo
+    <<: *golden_image
+    steps:
+      - checkout
+      - setup_remote_docker:
+          version: 19.03.13
+      - version-creation/export-version:
+          patch: << pipeline.number >>
+      - run:
+          name: Build and Publish Docker Image
+          command: |
+            source /app/build-base/assume_role.sh qa
+            /app/build-base/publish_image.py
+
+  deploy-cloudflare:
+    parameters:
+      target:
+        type: string
+        default: qa
+    working_directory: ~/repo
+    <<: *golden_image
+    environment:
+      DOMAIN_NAME: unibuddy.co
+    steps:
+      - checkout
+      - run:
+          name: Setup Cloudflare
+          command: |
+            source /app/build-base/assume_role.sh << parameters.target >>
+            python ./.circleci/scripts/set_dns_in_cloudflare.py \
+              --service_name $UB_SERVICE \
+              --domain $DOMAIN_NAME \
+              --target << parameters.target >> \
+              --region << parameters.ub_region >>
+
+  deploy-federation-schema:
+    parameters:
+      target:
+        type: string
+        default: qa
+    docker:
+      - image: unibuddytech/node-apollo-build-base:v2.1.1038
+    working_directory: ~/repo
+    steps:
+      - checkout
+      - run:
+          name: Update Federation Schema
+          command: |
+            source ./.circleci/scripts/set_federation_deployment_variables.sh
+            apollo service:push --graph=${APOLLO_FEDERATION_GRAPH} \
+            --key=${APOLLO_FEDERATION_KEY} \
+            --variant=${VARIANT} \
+            --serviceName=${UB_SERVICE} \
+            --serviceURL=${API_URL}/graphql \
+            --localSchemaFile=${SCHEMA_LOCATION} \
+
+workflows:
+  version: 2.1
+  build-and-test:
+    when: << pipeline.parameters.build >>
+    jobs:
+      - test-service:
+          context:
+            - ub-base-deployment
+
+      - deploy_ecr_repository:
+          context:
+            - ub-base-deployment
+          requires:
+            - test-service
+
+      - publish-docker-image:
+          context:
+            - ub-base-deployment
+          requires:
+            - test-service
+            - deploy_ecr_repository
+
+      - version-creation/create-available-version:
+          context:
+            - ub-base-deployment
+          executor_tag: v2.0.230
+          service: $UB_SERVICE
+          file: version.yml
+          artifact_storage_type: ECR
+          artifact_storage_location: $AWS_ECR_URL/$UB_SERVICE
+          octopus_space: Product
+          requires:
+            - publish-docker-image
+
+  deploy:
+    when: << pipeline.parameters.deploy >>
+    jobs:
+      - deploy-service:
+          context:
+            - ub-base-deployment
+          target: << pipeline.parameters.deployment_target >>
+          version: << pipeline.parameters.deployment_version >>
+
+      - deploy-cloudflare:
+          context:
+            - ub-base-deployment
+          requires:
+            - deploy-service
+          target: << pipeline.parameters.deployment_target >>
+
+      - deploy-federation-schema:
+          context:
+            - ub-base-deployment
+          requires:
+            - deploy-cloudflare
+          target: << pipeline.parameters.deployment_target >>
+
+      - version-creation/create-deployed-version:
+          context:
+            - ub-base-deployment
+          requires:
+            - deploy-federation-schema
+          environment: << pipeline.parameters.deployment_target >>
+          service: $UB_SERVICE # !!! ADD YOUR SERVICE HERE !!! see notion  https://www.notion.so/unibuddy/Service-List-85a3665ec6bb4784a1a6d25103d9b97a
+          version: << pipeline.parameters.deployment_version >>
+          executor_tag: v2.0.230
+          file: version.yml
